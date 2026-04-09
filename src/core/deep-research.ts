@@ -24,6 +24,8 @@ export type ResearchProgress = {
   currentQuery?: string;
   totalQueries: number;
   completedQueries: number;
+  learnings: string[];
+  visitedUrls: string[];
 };
 
 type ResearchResult = {
@@ -261,6 +263,7 @@ export async function deepResearch({
   visitedUrls = [],
   onProgress,
   config,
+  _sharedProgress,
 }: {
   query: string;
   breadth: number;
@@ -269,17 +272,22 @@ export async function deepResearch({
   visitedUrls?: string[];
   onProgress?: (progress: ResearchProgress) => void;
   config?: ResearchConfig;
+  /** @internal shared progress object across recursion tree */
+  _sharedProgress?: ResearchProgress;
 }): Promise<ResearchResult> {
   const defaults = getDefaults(config);
   const searchProvider = resolveSearchProvider(config);
 
-  const progress: ResearchProgress = {
+  // Top-level call creates the shared progress; recursive calls reuse it
+  const progress: ResearchProgress = _sharedProgress ?? {
     currentDepth: depth,
     totalDepth: depth,
     currentBreadth: breadth,
     totalBreadth: breadth,
     totalQueries: 0,
     completedQueries: 0,
+    learnings: [...learnings],
+    visitedUrls: [...visitedUrls],
   };
 
   const reportProgress = (update: Partial<ResearchProgress>) => {
@@ -294,8 +302,9 @@ export async function deepResearch({
     config,
   });
 
+  // Accumulate totalQueries across recursion levels (additive, not replacement)
   reportProgress({
-    totalQueries: serpQueries.length,
+    totalQueries: progress.totalQueries + serpQueries.length,
     currentQuery: serpQueries[0]?.query,
   });
 
@@ -317,6 +326,19 @@ export async function deepResearch({
             numFollowUpQuestions: newBreadth,
             config,
           });
+
+          // Update shared progress with new learnings and URLs incrementally
+          for (const l of newLearnings.learnings) {
+            if (!progress.learnings.includes(l)) {
+              progress.learnings.push(l);
+            }
+          }
+          for (const u of newUrls) {
+            if (!progress.visitedUrls.includes(u)) {
+              progress.visitedUrls.push(u);
+            }
+          }
+
           const allLearnings = [...learnings, ...newLearnings.learnings];
           const allUrls = [...visitedUrls, ...newUrls];
 
@@ -345,6 +367,7 @@ export async function deepResearch({
               visitedUrls: allUrls,
               onProgress,
               config,
+              _sharedProgress: progress,
             });
           } else {
             reportProgress({

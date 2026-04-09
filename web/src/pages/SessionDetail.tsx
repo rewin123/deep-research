@@ -128,13 +128,15 @@ export function SessionDetail() {
             >
               Download Markdown
             </a>
-            <a
-              href={getPdfUrl(session.id)}
-              className="btn btn-secondary"
-              download
-            >
-              Download PDF
-            </a>
+            {session.pdfGenerated && (
+              <a
+                href={getPdfUrl(session.id)}
+                className="btn btn-secondary"
+                download
+              >
+                Download PDF
+              </a>
+            )}
           </div>
           <MarkdownPreview content={session.reportMarkdown} />
         </div>

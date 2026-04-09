@@ -157,6 +157,7 @@ export class SessionManager {
       learnings: [],
       visitedUrls: [],
       reportMarkdown: null,
+      pdfGenerated: false,
       error: null,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
@@ -324,18 +325,19 @@ ${session.feedbackQuestions.map((q, i) => `Q: ${q}\nA: ${answers[i] ?? ''}`).joi
         config: researchConfig,
         onProgress: progress => {
           session.progress = progress;
+          session.learnings = progress.learnings;
+          session.visitedUrls = progress.visitedUrls;
           this.emitEvent(session.id, { type: 'progress', data: progress });
+          this.emitEvent(session.id, {
+            type: 'learnings',
+            data: { learnings: progress.learnings, visitedUrls: progress.visitedUrls },
+          });
         },
       });
 
       session.learnings = learnings;
       session.visitedUrls = visitedUrls;
       await this.persistSession(session);
-
-      this.emitEvent(session.id, {
-        type: 'learnings',
-        data: { learnings, visitedUrls },
-      });
 
       // Step 4: Generate report
       this.updateStatus(session, 'generating_report');
@@ -359,8 +361,10 @@ ${session.feedbackQuestions.map((q, i) => `Q: ${q}\nA: ${answers[i] ?? ''}`).joi
 
       try {
         await generatePdf(session.name, report);
+        session.pdfGenerated = true;
       } catch (pdfErr) {
         console.error('PDF generation failed (non-fatal):', pdfErr);
+        session.pdfGenerated = false;
         this.emitEvent(session.id, {
           type: 'log',
           data: {
