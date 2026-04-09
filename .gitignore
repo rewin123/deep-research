@@ -4,6 +4,8 @@
 output.md
 report.md
 answer.md
+output/
+data/
 
 # Dependencies
 node_modules
