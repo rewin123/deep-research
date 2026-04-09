@@ -78,7 +78,7 @@ flowchart TB
 
 - Node.js environment
 - API keys for:
-  - Firecrawl API (for web search and content extraction)
+  - Tavily API (for web search and content extraction)
   - OpenAI API (for o3 mini model)
 
 ## Setup
@@ -95,9 +95,7 @@ npm install
 3. Set up environment variables in a `.env.local` file:
 
 ```bash
-FIRECRAWL_KEY="your_firecrawl_key"
-# If you want to use your self-hosted Firecrawl, add the following below:
-# FIRECRAWL_BASE_URL="http://localhost:3002"
+TAVILY_API_KEY="your_tavily_api_key"
 
 OPENAI_KEY="your_openai_key"
 ```
@@ -152,9 +150,9 @@ The final report will be saved as `report.md` or `answer.md` in your working dir
 
 ### Concurrency
 
-If you have a paid version of Firecrawl or a local version, feel free to increase the `ConcurrencyLimit` by setting the `CONCURRENCY_LIMIT` environment variable so it runs faster.
+You can increase the concurrency limit by setting the `TAVILY_CONCURRENCY` environment variable so it runs faster.
 
-If you have a free version, you may sometimes run into rate limit errors, you can reduce the limit to 1 (but it will run a lot slower).
+If you are on a free Tavily plan, you may sometimes run into rate limit errors, you can reduce the limit to 1 (but it will run a lot slower).
 
 ### DeepSeek R1
 
