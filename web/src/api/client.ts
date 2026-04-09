@@ -8,6 +8,15 @@ async function request<T>(
     headers: { 'Content-Type': 'application/json' },
     ...options,
   });
+
+  const contentType = res.headers.get('content-type') || '';
+  if (!contentType.includes('application/json')) {
+    throw new Error(
+      `Expected JSON response from ${path} but got ${contentType || 'unknown content-type'} (status ${res.status}). ` +
+      'Is the API server running?',
+    );
+  }
+
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
     throw new Error(body.error || `Request failed: ${res.status}`);

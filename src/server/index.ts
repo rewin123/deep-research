@@ -25,6 +25,11 @@ async function main() {
   app.use('/api/sessions', createFilesRouter(manager));
   app.use('/api/settings', createSettingsRouter());
 
+  // Return 404 JSON for any unmatched /api routes so they never fall through to the SPA
+  app.use('/api', (_req, res) => {
+    res.status(404).json({ error: 'API endpoint not found' });
+  });
+
   // Serve React frontend (production build)
   const webDist = path.resolve(process.cwd(), 'web', 'dist');
   app.use(express.static(webDist));
