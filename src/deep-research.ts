@@ -29,6 +29,9 @@ type ResearchResult = {
 // increase this if you have higher API rate limits
 const ConcurrencyLimit = Number(process.env.TAVILY_CONCURRENCY) || 2;
 
+// timeout for LLM API calls in milliseconds (default: 3 minutes)
+const LLM_TIMEOUT = Number(process.env.LLM_TIMEOUT) || 180_000;
+
 // Initialize Tavily client with API key
 const tvly = tavily({ apiKey: process.env.TAVILY_API_KEY ?? '' });
 
@@ -93,27 +96,45 @@ async function processSerpResult({
   );
   log(`Ran ${query}, found ${contents.length} contents`);
 
-  const res = await generateObject({
-    model: getModel(),
-    abortSignal: AbortSignal.timeout(60_000),
-    system: systemPrompt(),
-    prompt: trimPrompt(
-      `Given the following contents from a SERP search for the query <query>${query}</query>, generate a list of learnings from the contents. Return a maximum of ${numLearnings} learnings, but feel free to return less if the contents are clear. Make sure each learning is unique and not similar to each other. The learnings should be concise and to the point, as detailed and information dense as possible. Make sure to include any entities like people, places, companies, products, things, etc in the learnings, as well as any exact metrics, numbers, or dates. The learnings will be used to research the topic further.\n\n<contents>${contents
-        .map(content => `<content>\n${content}\n</content>`)
-        .join('\n')}</contents>`,
-    ),
-    schema: z.object({
-      learnings: z.array(z.string()).describe(`List of learnings, max of ${numLearnings}`),
-      followUpQuestions: z
-        .array(z.string())
-        .describe(
-          `List of follow-up questions to research the topic further, max of ${numFollowUpQuestions}`,
-        ),
-    }),
-  });
-  log(`Created ${res.object.learnings.length} learnings`, res.object.learnings);
+  const prompt = trimPrompt(
+    `Given the following contents from a SERP search for the query <query>${query}</query>, generate a list of learnings from the contents. Return a maximum of ${numLearnings} learnings, but feel free to return less if the contents are clear. Make sure each learning is unique and not similar to each other. The learnings should be concise and to the point, as detailed and information dense as possible. Make sure to include any entities like people, places, companies, products, things, etc in the learnings, as well as any exact metrics, numbers, or dates. The learnings will be used to research the topic further.\n\n<contents>${contents
+      .map(content => `<content>\n${content}\n</content>`)
+      .join('\n')}</contents>`,
+  );
 
-  return res.object;
+  const maxRetries = 3;
+  for (let attempt = 0; attempt < maxRetries; attempt++) {
+    try {
+      const timeout = LLM_TIMEOUT * (attempt + 1); // increase timeout on each retry
+      const res = await generateObject({
+        model: getModel(),
+        abortSignal: AbortSignal.timeout(timeout),
+        system: systemPrompt(),
+        prompt,
+        schema: z.object({
+          learnings: z.array(z.string()).describe(`List of learnings, max of ${numLearnings}`),
+          followUpQuestions: z
+            .array(z.string())
+            .describe(
+              `List of follow-up questions to research the topic further, max of ${numFollowUpQuestions}`,
+            ),
+        }),
+      });
+      log(`Created ${res.object.learnings.length} learnings`, res.object.learnings);
+
+      return res.object;
+    } catch (e: any) {
+      if (e.name === 'TimeoutError' || e.message?.includes('Timeout') || e.message?.includes('timeout')) {
+        log(`Timeout on attempt ${attempt + 1}/${maxRetries} for query: ${query}`);
+        if (attempt === maxRetries - 1) throw e;
+      } else {
+        throw e;
+      }
+    }
+  }
+
+  // This should never be reached due to the throw above, but TypeScript needs it
+  throw new Error('Unexpected: all retries exhausted');
 }
 
 export async function writeFinalReport({
