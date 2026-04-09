@@ -6,9 +6,14 @@
     "format": "prettier --write \"src/**/*.{ts,tsx}\"",
     "tsx": "tsx --env-file=.env.local",
     "start": "tsx --env-file=.env.local src/run.ts",
+    "server": "tsx --env-file=.env.local src/server/index.ts",
+    "dev:server": "tsx watch --env-file=.env.local src/server/index.ts",
+    "dev:web": "cd web && npx vite",
+    "dev": "npm run dev:server & npm run dev:web",
+    "build:web": "cd web && npx vite build",
     "api": "tsx --env-file=.env.local src/api.ts",
     "docker": "tsx src/run.ts",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "node --test src/**/*.test.ts"
   },
   "author": "",
   "license": "ISC",
@@ -33,6 +38,7 @@
     "express": "^4.18.3",
     "js-tiktoken": "^1.0.17",
     "lodash-es": "^4.17.21",
+    "md-to-pdf": "^5.2.5",
     "p-limit": "^6.2.0",
     "uuid": "^9.0.1",
     "zod": "^3.24.1"
