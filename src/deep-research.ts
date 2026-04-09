@@ -1,4 +1,4 @@
-import FirecrawlApp, { SearchResponse } from '@mendable/firecrawl-js';
+import { tavily } from '@tavily/core';
 import { generateObject } from 'ai';
 import { compact } from 'lodash-es';
 import pLimit from 'p-limit';
@@ -27,14 +27,13 @@ type ResearchResult = {
 };
 
 // increase this if you have higher API rate limits
-const ConcurrencyLimit = Number(process.env.FIRECRAWL_CONCURRENCY) || 2;
+const ConcurrencyLimit = Number(process.env.TAVILY_CONCURRENCY) || 2;
 
-// Initialize Firecrawl with optional API key and optional base url
+// Initialize Tavily client with API key
+const tvly = tavily({ apiKey: process.env.TAVILY_API_KEY ?? '' });
 
-const firecrawl = new FirecrawlApp({
-  apiKey: process.env.FIRECRAWL_KEY ?? '',
-  apiUrl: process.env.FIRECRAWL_BASE_URL,
-});
+// Infer the search response type from Tavily client
+type TavilySearchResponse = Awaited<ReturnType<typeof tvly.search>>;
 
 // take en user query, return a list of SERP queries
 async function generateSerpQueries({
@@ -85,12 +84,12 @@ async function processSerpResult({
   numFollowUpQuestions = 3,
 }: {
   query: string;
-  result: SearchResponse;
+  result: TavilySearchResponse;
   numLearnings?: number;
   numFollowUpQuestions?: number;
 }) {
-  const contents = compact(result.data.map(item => item.markdown)).map(content =>
-    trimPrompt(content, 25_000),
+  const contents = compact(result.results.map(item => item.rawContent ?? item.content)).map(
+    content => trimPrompt(content, 25_000),
   );
   log(`Ran ${query}, found ${contents.length} contents`);
 
@@ -219,14 +218,13 @@ export async function deepResearch({
     serpQueries.map(serpQuery =>
       limit(async () => {
         try {
-          const result = await firecrawl.search(serpQuery.query, {
-            timeout: 15000,
-            limit: 5,
-            scrapeOptions: { formats: ['markdown'] },
+          const result = await tvly.search(serpQuery.query, {
+            maxResults: 5,
+            includeRawContent: true,
           });
 
           // Collect URLs from this search
-          const newUrls = compact(result.data.map(item => item.url));
+          const newUrls = compact(result.results.map(item => item.url));
           const newBreadth = Math.ceil(breadth / 2);
           const newDepth = depth - 1;
 
