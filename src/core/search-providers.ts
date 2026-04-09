@@ -99,6 +99,32 @@ async function fetchPageContent(url: string): Promise<string> {
   }
 }
 
+const DDG_MAX_RETRIES = 4;
+const DDG_BASE_DELAY_MS = 2_000;
+
+async function ddgSearchWithRetry(
+  query: string,
+  retries = DDG_MAX_RETRIES,
+): Promise<Awaited<ReturnType<typeof ddgSearch>>> {
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    try {
+      return await ddgSearch(query, { safeSearch: 0 });
+    } catch (err: any) {
+      const isRateLimit =
+        err?.message?.includes('anomaly') ||
+        err?.message?.includes('too quickly');
+      if (!isRateLimit || attempt === retries) throw err;
+      const jitter = Math.random() * 1_000;
+      const delay = DDG_BASE_DELAY_MS * 2 ** attempt + jitter; // ~2s, ~4s, ~8s, ~16s
+      console.warn(
+        `[DDG] Rate-limited on attempt ${attempt + 1}, retrying in ${delay}ms…`,
+      );
+      await new Promise(r => setTimeout(r, delay));
+    }
+  }
+  throw new Error('Unreachable');
+}
+
 export class DuckDuckGoSearchProvider implements SearchProvider {
   private concurrency: number;
 
@@ -107,9 +133,7 @@ export class DuckDuckGoSearchProvider implements SearchProvider {
   }
 
   async search(query: string, maxResults = 5): Promise<SearchResponse> {
-    const ddgResults = await ddgSearch(query, {
-      safeSearch: 0, // SafeSearchType.OFF
-    });
+    const ddgResults = await ddgSearchWithRetry(query);
 
     if (ddgResults.noResults || !ddgResults.results.length) {
       return { results: [] };
