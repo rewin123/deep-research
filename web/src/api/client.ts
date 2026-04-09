@@ -47,6 +47,7 @@ export interface SessionDetail {
   learnings: string[];
   visitedUrls: string[];
   reportMarkdown: string | null;
+  pdfGenerated: boolean;
   error: string | null;
   createdAt: string;
   updatedAt: string;
