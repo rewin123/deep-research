@@ -4,7 +4,7 @@ import express, { Request, Response } from 'express';
 import { deepResearch, writeFinalAnswer,writeFinalReport } from './deep-research';
 
 const app = express();
-const port = process.env.PORT || 3051;
+const port = process.env.PORT || 3001;
 
 // Middleware
 app.use(cors());
@@ -95,8 +95,8 @@ app.post('/api/generate-report',async(req:Request,res:Response)=>{
 
 
 // Start the server
-app.listen(port, () => {
-  console.log(`Deep Research API running on port ${port}`);
+app.listen(Number(port), '0.0.0.0', () => {
+  console.log(`Deep Research API running on http://0.0.0.0:${port}`);
 });
 
 export default app;

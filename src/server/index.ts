@@ -7,7 +7,7 @@ import { createSessionsRouter } from './routes/sessions';
 import { createSettingsRouter } from './routes/settings';
 import { SessionManager } from './session-manager';
 
-const PORT = Number(process.env.PORT) || 3051;
+const PORT = Number(process.env.PORT) || 3001;
 
 async function main() {
   const app = express();
@@ -44,8 +44,8 @@ async function main() {
     });
   });
 
-  app.listen(PORT, () => {
-    console.log(`Deep Research server running on http://localhost:${PORT}`);
+  app.listen(PORT, '0.0.0.0', () => {
+    console.log(`Deep Research server running on http://0.0.0.0:${PORT}`);
   });
 }
 
