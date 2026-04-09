@@ -49,6 +49,7 @@ export function settingsToResearchConfig(settings: AppSettings) {
       contextSize: settings.contextSize || undefined,
     },
     tavilyApiKey: settings.tavilyApiKey || undefined,
+    searchProvider: settings.searchProvider || undefined,
     tavilyConcurrency: settings.tavilyConcurrency || undefined,
     llmTimeout: settings.llmTimeout || undefined,
   };

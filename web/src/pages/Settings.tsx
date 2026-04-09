@@ -35,7 +35,7 @@ const FIELDS: {
     label: 'Tavily API Key',
     type: 'password',
     placeholder: 'tvly-...',
-    hint: 'Required for web search',
+    hint: 'Required only when using Tavily search provider',
   },
   {
     key: 'fireworksKey',
@@ -60,7 +60,7 @@ const FIELDS: {
   },
   {
     key: 'tavilyConcurrency',
-    label: 'Tavily Concurrency',
+    label: 'Search Concurrency',
     type: 'number',
     placeholder: '2',
     hint: 'Max parallel search queries',
@@ -114,6 +114,27 @@ export function Settings() {
       </p>
 
       <form className="settings-form" onSubmit={handleSave}>
+        <div className="form-group">
+          <label htmlFor="searchProvider">Search Provider</label>
+          <select
+            id="searchProvider"
+            className="form-input"
+            value={settings.searchProvider || 'duckduckgo'}
+            onChange={e =>
+              handleChange('searchProvider', e.target.value)
+            }
+          >
+            <option value="duckduckgo">
+              DuckDuckGo (free, no API key needed)
+            </option>
+            <option value="tavily">Tavily (requires API key)</option>
+          </select>
+          <span className="hint">
+            DuckDuckGo is completely free. Tavily provides higher quality
+            results but requires an API key.
+          </span>
+        </div>
+
         {FIELDS.map(field => (
           <div key={field.key} className="form-group">
             <label htmlFor={field.key}>{field.label}</label>

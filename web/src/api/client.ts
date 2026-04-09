@@ -43,11 +43,14 @@ export interface SessionDetail {
   updatedAt: string;
 }
 
+export type SearchProviderType = 'tavily' | 'duckduckgo';
+
 export interface AppSettings {
   openaiKey: string;
   openaiEndpoint: string;
   customModel: string;
   tavilyApiKey: string;
+  searchProvider: SearchProviderType;
   contextSize: number;
   llmTimeout: number;
   tavilyConcurrency: number;

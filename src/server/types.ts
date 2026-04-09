@@ -41,11 +41,14 @@ export interface SessionEvent {
   timestamp: string;
 }
 
+export type SearchProviderType = 'tavily' | 'duckduckgo';
+
 export interface AppSettings {
   openaiKey: string;
   openaiEndpoint: string;
   customModel: string;
   tavilyApiKey: string;
+  searchProvider: SearchProviderType;
   contextSize: number;
   llmTimeout: number;
   tavilyConcurrency: number;
@@ -57,6 +60,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   openaiEndpoint: '',
   customModel: '',
   tavilyApiKey: '',
+  searchProvider: 'duckduckgo',
   contextSize: 128_000,
   llmTimeout: 180_000,
   tavilyConcurrency: 2,

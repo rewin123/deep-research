@@ -1,4 +1,3 @@
-import { tavily } from '@tavily/core';
 import { generateObject } from 'ai';
 import { compact } from 'lodash-es';
 import pLimit from 'p-limit';
@@ -6,6 +5,12 @@ import { z } from 'zod';
 
 import { type ModelSettings, getModel, trimPrompt } from './ai/providers';
 import { systemPrompt } from './prompt';
+import {
+  type SearchProvider,
+  type SearchProviderType,
+  type SearchResponse,
+  createSearchProvider,
+} from './search-providers';
 
 function log(...args: any[]) {
   console.log(...args);
@@ -29,9 +34,11 @@ type ResearchResult = {
 export interface ResearchConfig {
   /** Model/provider settings */
   modelSettings?: ModelSettings;
-  /** Tavily API key */
+  /** Tavily API key (required when searchProvider is 'tavily') */
   tavilyApiKey?: string;
-  /** Max concurrent Tavily searches (default: 2) */
+  /** Search provider: 'tavily' or 'duckduckgo' (default: auto-detect) */
+  searchProvider?: SearchProviderType;
+  /** Max concurrent searches (default: 2) */
   tavilyConcurrency?: number;
   /** LLM timeout in ms (default: 180000) */
   llmTimeout?: number;
@@ -49,14 +56,28 @@ function getDefaults(config?: ResearchConfig) {
   };
 }
 
-function createTavilyClient(apiKey: string) {
-  return tavily({ apiKey });
-}
+function resolveSearchProvider(config?: ResearchConfig): SearchProvider {
+  const defaults = getDefaults(config);
 
-// Infer the search response type
-type TavilySearchResponse = Awaited<
-  ReturnType<ReturnType<typeof tavily>['search']>
->;
+  // Explicit provider choice
+  if (config?.searchProvider) {
+    return createSearchProvider(config.searchProvider, {
+      tavilyApiKey: defaults.tavilyApiKey,
+      concurrency: defaults.concurrencyLimit,
+    });
+  }
+
+  // Auto-detect: use Tavily if key is available, otherwise DuckDuckGo
+  if (defaults.tavilyApiKey) {
+    return createSearchProvider('tavily', {
+      tavilyApiKey: defaults.tavilyApiKey,
+    });
+  }
+
+  return createSearchProvider('duckduckgo', {
+    concurrency: defaults.concurrencyLimit,
+  });
+}
 
 async function generateSerpQueries({
   query,
@@ -107,7 +128,7 @@ async function processSerpResult({
   config,
 }: {
   query: string;
-  result: TavilySearchResponse;
+  result: SearchResponse;
   numLearnings?: number;
   numFollowUpQuestions?: number;
   config?: ResearchConfig;
@@ -250,7 +271,7 @@ export async function deepResearch({
   config?: ResearchConfig;
 }): Promise<ResearchResult> {
   const defaults = getDefaults(config);
-  const tvly = createTavilyClient(defaults.tavilyApiKey);
+  const searchProvider = resolveSearchProvider(config);
 
   const progress: ResearchProgress = {
     currentDepth: depth,
@@ -284,10 +305,7 @@ export async function deepResearch({
     serpQueries.map(serpQuery =>
       limit(async () => {
         try {
-          const result = await tvly.search(serpQuery.query, {
-            maxResults: 5,
-            includeRawContent: true,
-          });
+          const result = await searchProvider.search(serpQuery.query, 5);
 
           const newUrls = compact(result.results.map(item => item.url));
           const newBreadth = Math.ceil(breadth / 2);
