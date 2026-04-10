@@ -10,6 +10,10 @@ export async function loadSettings(): Promise<AppSettings> {
   try {
     const raw = await fs.readFile(SETTINGS_FILE, 'utf-8');
     const parsed = JSON.parse(raw);
+    // Migrate removed provider names to the current default
+    if (parsed.searchProvider === 'duckduckgo') {
+      parsed.searchProvider = DEFAULT_SETTINGS.searchProvider;
+    }
     return { ...DEFAULT_SETTINGS, ...parsed };
   } catch {
     return { ...DEFAULT_SETTINGS };
@@ -50,6 +54,7 @@ export function settingsToResearchConfig(settings: AppSettings) {
     },
     tavilyApiKey: settings.tavilyApiKey || undefined,
     searchProvider: settings.searchProvider || undefined,
+    searxngUrl: settings.searxngUrl || undefined,
     tavilyConcurrency: settings.tavilyConcurrency || undefined,
     llmTimeout: settings.llmTimeout || undefined,
   };

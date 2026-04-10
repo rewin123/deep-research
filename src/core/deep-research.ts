@@ -38,8 +38,10 @@ export interface ResearchConfig {
   modelSettings?: ModelSettings;
   /** Tavily API key (required when searchProvider is 'tavily') */
   tavilyApiKey?: string;
-  /** Search provider: 'tavily' or 'duckduckgo' (default: auto-detect) */
+  /** Search provider: 'tavily' or 'searxng' (default: auto-detect) */
   searchProvider?: SearchProviderType;
+  /** SearXNG instance URL (default: http://localhost:8080) */
+  searxngUrl?: string;
   /** Max concurrent searches (default: 2) */
   tavilyConcurrency?: number;
   /** LLM timeout in ms (default: 180000) */
@@ -55,6 +57,8 @@ function getDefaults(config?: ResearchConfig) {
       config?.llmTimeout ?? (Number(process.env.LLM_TIMEOUT) || 180_000),
     tavilyApiKey:
       config?.tavilyApiKey ?? (process.env.TAVILY_API_KEY ?? ''),
+    searxngUrl:
+      config?.searxngUrl ?? (process.env.SEARXNG_URL || 'http://localhost:8080'),
   };
 }
 
@@ -65,18 +69,20 @@ function resolveSearchProvider(config?: ResearchConfig): SearchProvider {
   if (config?.searchProvider) {
     return createSearchProvider(config.searchProvider, {
       tavilyApiKey: defaults.tavilyApiKey,
+      searxngUrl: defaults.searxngUrl,
       concurrency: defaults.concurrencyLimit,
     });
   }
 
-  // Auto-detect: use Tavily if key is available, otherwise DuckDuckGo
+  // Auto-detect: use Tavily if key is available, otherwise SearXNG
   if (defaults.tavilyApiKey) {
     return createSearchProvider('tavily', {
       tavilyApiKey: defaults.tavilyApiKey,
     });
   }
 
-  return createSearchProvider('duckduckgo', {
+  return createSearchProvider('searxng', {
+    searxngUrl: defaults.searxngUrl,
     concurrency: defaults.concurrencyLimit,
   });
 }

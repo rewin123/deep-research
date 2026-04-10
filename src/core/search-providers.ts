@@ -1,5 +1,4 @@
 import * as cheerio from 'cheerio';
-import { search as ddgSearch } from 'duck-duck-scrape';
 import pLimit from 'p-limit';
 
 import { tavily } from '@tavily/core';
@@ -45,7 +44,7 @@ export class TavilySearchProvider implements SearchProvider {
   }
 }
 
-// ─── DuckDuckGo + Cheerio ────────────────────────────────
+// ─── SearXNG ────────────────────────────────────────────
 
 const FETCH_TIMEOUT = 10_000;
 const CONTENT_LIMIT = 50_000; // chars
@@ -99,58 +98,64 @@ async function fetchPageContent(url: string): Promise<string> {
   }
 }
 
-const DDG_MAX_RETRIES = 4;
-const DDG_BASE_DELAY_MS = 2_000;
+const DEFAULT_SEARXNG_URL = 'http://localhost:8080';
 
-async function ddgSearchWithRetry(
-  query: string,
-  retries = DDG_MAX_RETRIES,
-): Promise<Awaited<ReturnType<typeof ddgSearch>>> {
-  for (let attempt = 0; attempt <= retries; attempt++) {
-    try {
-      return await ddgSearch(query, { safeSearch: 0 });
-    } catch (err: any) {
-      const isRateLimit =
-        err?.message?.includes('anomaly') ||
-        err?.message?.includes('too quickly');
-      if (!isRateLimit || attempt === retries) throw err;
-      const jitter = Math.random() * 1_000;
-      const delay = DDG_BASE_DELAY_MS * 2 ** attempt + jitter; // ~2s, ~4s, ~8s, ~16s
-      console.warn(
-        `[DDG] Rate-limited on attempt ${attempt + 1}, retrying in ${delay}ms…`,
-      );
-      await new Promise(r => setTimeout(r, delay));
-    }
-  }
-  throw new Error('Unreachable');
-}
-
-export class DuckDuckGoSearchProvider implements SearchProvider {
+export class SearXNGSearchProvider implements SearchProvider {
+  private baseUrl: string;
   private concurrency: number;
 
-  constructor(concurrency = 3) {
+  constructor(baseUrl?: string, concurrency = 3) {
+    this.baseUrl = (baseUrl || DEFAULT_SEARXNG_URL).replace(/\/+$/, '');
     this.concurrency = concurrency;
   }
 
   async search(query: string, maxResults = 5): Promise<SearchResponse> {
-    const ddgResults = await ddgSearchWithRetry(query);
+    const url = new URL('/search', this.baseUrl);
+    url.searchParams.set('q', query);
+    url.searchParams.set('format', 'json');
+    url.searchParams.set('categories', 'general');
 
-    if (ddgResults.noResults || !ddgResults.results.length) {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 15_000);
+
+    let data: any;
+    try {
+      const res = await fetch(url.toString(), {
+        signal: controller.signal,
+        headers: { Accept: 'application/json' },
+      });
+      clearTimeout(timeout);
+
+      if (!res.ok) {
+        const body = await res.text().catch(() => '');
+        throw new Error(
+          `SearXNG responded with ${res.status}: ${body.slice(0, 200)}`,
+        );
+      }
+      data = await res.json();
+    } catch (err: any) {
+      clearTimeout(timeout);
+      if (err?.name === 'AbortError') {
+        throw new Error(`SearXNG request timed out (${this.baseUrl})`);
+      }
+      throw err;
+    }
+
+    if (!data.results || !data.results.length) {
       return { results: [] };
     }
 
-    const topResults = ddgResults.results.slice(0, maxResults);
+    const topResults = (data.results as any[]).slice(0, maxResults);
     const limit = pLimit(this.concurrency);
 
-    // Fetch full page content in parallel
     const results = await Promise.all(
       topResults.map(r =>
         limit(async () => {
           const rawContent = await fetchPageContent(r.url);
           return {
-            url: r.url,
-            title: r.title,
-            content: r.rawDescription || r.description,
+            url: r.url as string,
+            title: (r.title || '') as string,
+            content: (r.content || '') as string,
             rawContent: rawContent || undefined,
           };
         }),
@@ -163,11 +168,11 @@ export class DuckDuckGoSearchProvider implements SearchProvider {
 
 // ─── Factory ─────────────────────────────────────────────
 
-export type SearchProviderType = 'tavily' | 'duckduckgo';
+export type SearchProviderType = 'tavily' | 'searxng';
 
 export function createSearchProvider(
   type: SearchProviderType,
-  options: { tavilyApiKey?: string; concurrency?: number },
+  options: { tavilyApiKey?: string; searxngUrl?: string; concurrency?: number },
 ): SearchProvider {
   switch (type) {
     case 'tavily': {
@@ -176,8 +181,8 @@ export function createSearchProvider(
       }
       return new TavilySearchProvider(options.tavilyApiKey);
     }
-    case 'duckduckgo':
-      return new DuckDuckGoSearchProvider(options.concurrency);
+    case 'searxng':
+      return new SearXNGSearchProvider(options.searxngUrl, options.concurrency);
     default:
       throw new Error(`Unknown search provider: ${type}`);
   }

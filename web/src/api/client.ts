@@ -53,7 +53,7 @@ export interface SessionDetail {
   updatedAt: string;
 }
 
-export type SearchProviderType = 'tavily' | 'duckduckgo';
+export type SearchProviderType = 'tavily' | 'searxng';
 
 export interface AppSettings {
   openaiKey: string;
@@ -61,6 +61,7 @@ export interface AppSettings {
   customModel: string;
   tavilyApiKey: string;
   searchProvider: SearchProviderType;
+  searxngUrl: string;
   contextSize: number;
   llmTimeout: number;
   tavilyConcurrency: number;

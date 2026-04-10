@@ -42,7 +42,7 @@ export interface SessionEvent {
   timestamp: string;
 }
 
-export type SearchProviderType = 'tavily' | 'duckduckgo';
+export type SearchProviderType = 'tavily' | 'searxng';
 
 export interface AppSettings {
   openaiKey: string;
@@ -50,6 +50,7 @@ export interface AppSettings {
   customModel: string;
   tavilyApiKey: string;
   searchProvider: SearchProviderType;
+  searxngUrl: string;
   contextSize: number;
   llmTimeout: number;
   tavilyConcurrency: number;
@@ -61,7 +62,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
   openaiEndpoint: '',
   customModel: '',
   tavilyApiKey: '',
-  searchProvider: 'duckduckgo',
+  searchProvider: 'searxng',
+  searxngUrl: 'http://localhost:8080',
   contextSize: 128_000,
   llmTimeout: 180_000,
   tavilyConcurrency: 2,

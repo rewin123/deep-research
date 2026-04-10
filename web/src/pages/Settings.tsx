@@ -31,6 +31,13 @@ const FIELDS: {
     hint: 'Set this to use a custom model with the endpoint above',
   },
   {
+    key: 'searxngUrl',
+    label: 'SearXNG URL',
+    type: 'text',
+    placeholder: 'http://localhost:8080',
+    hint: 'URL of your SearXNG instance',
+  },
+  {
     key: 'tavilyApiKey',
     label: 'Tavily API Key',
     type: 'password',
@@ -119,19 +126,19 @@ export function Settings() {
           <select
             id="searchProvider"
             className="form-input"
-            value={settings.searchProvider || 'duckduckgo'}
+            value={settings.searchProvider || 'searxng'}
             onChange={e =>
               handleChange('searchProvider', e.target.value)
             }
           >
-            <option value="duckduckgo">
-              DuckDuckGo (free, no API key needed)
+            <option value="searxng">
+              SearXNG (free, self-hosted)
             </option>
             <option value="tavily">Tavily (requires API key)</option>
           </select>
           <span className="hint">
-            DuckDuckGo is completely free. Tavily provides higher quality
-            results but requires an API key.
+            SearXNG is free and self-hosted (docker run -d -p 8080:8080 searxng/searxng:latest).
+            Tavily provides higher quality results but requires an API key.
           </span>
         </div>
 
