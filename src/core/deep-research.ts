@@ -1,7 +1,6 @@
-import { generateObject } from 'ai';
+import { generateText } from 'ai';
 import { compact } from 'lodash-es';
 import pLimit from 'p-limit';
-import { z } from 'zod';
 
 import { type ModelSettings, getModel, trimPrompt } from './ai/providers';
 import { systemPrompt } from './prompt';
@@ -14,6 +13,24 @@ import {
 
 function log(...args: any[]) {
   console.log(...args);
+}
+
+/** Extract content between <tag>…</tag>. Returns empty string if not found. */
+function extractTag(text: string, tag: string): string {
+  const re = new RegExp(`<${tag}>([\\s\\S]*?)</${tag}>`);
+  return re.exec(text)?.[1]?.trim() ?? '';
+}
+
+/** Extract all occurrences of <tag>…</tag>. */
+function extractAllTags(text: string, tag: string): string[] {
+  const re = new RegExp(`<${tag}>([\\s\\S]*?)</${tag}>`, 'g');
+  const results: string[] = [];
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(text)) !== null) {
+    const v = m[1]?.trim();
+    if (v) results.push(v);
+  }
+  return results;
 }
 
 export type ResearchProgress = {
@@ -98,34 +115,38 @@ async function generateSerpQueries({
   learnings?: string[];
   config?: ResearchConfig;
 }) {
-  const res = await generateObject({
+  const res = await generateText({
     model: getModel(config?.modelSettings),
     system: systemPrompt(),
-    prompt: `Given the following prompt from the user, generate a list of SERP queries to research the topic. Return a maximum of ${numQueries} queries, but feel free to return less if the original prompt is clear. Make sure each query is unique and not similar to each other: <prompt>${query}</prompt>\n\n${
-      learnings
-        ? `Here are some learnings from previous research, use them to generate more specific queries: ${learnings.join(
-            '\n',
-          )}`
-        : ''
-    }`,
-    schema: z.object({
-      queries: z
-        .array(
-          z.object({
-            query: z.string().describe('The SERP query'),
-            researchGoal: z
-              .string()
-              .describe(
-                'First talk about the goal of the research that this query is meant to accomplish, then go deeper into how to advance the research once the results are found, mention additional research directions. Be as specific as possible, especially for additional research directions.',
-              ),
-          }),
-        )
-        .describe(`List of SERP queries, max of ${numQueries}`),
-    }),
-  });
-  log(`Created ${res.object.queries.length} queries`, res.object.queries);
+    prompt: `Given the following prompt from the user, generate a list of SERP queries to research the topic. Return a maximum of ${numQueries} queries, but feel free to return less if the original prompt is clear. Make sure each query is unique and not similar to each other.
 
-  return res.object.queries.slice(0, numQueries);
+<prompt>${query}</prompt>
+
+${
+  learnings
+    ? `Here are some learnings from previous research, use them to generate more specific queries:\n${learnings.join('\n')}`
+    : ''
+}
+
+Return each query inside XML tags like this:
+<search_query>
+<query>the search query</query>
+<research_goal>the goal of this query and how to advance research once results are found</research_goal>
+</search_query>`,
+  });
+
+  const text = res.text;
+  const queryBlocks = extractAllTags(text, 'search_query');
+  const queries = compact(
+    queryBlocks.map(block => {
+      const q = extractTag(block, 'query');
+      const goal = extractTag(block, 'research_goal');
+      return q ? { query: q, researchGoal: goal } : null;
+    }),
+  );
+
+  log(`Created ${queries.length} queries`, queries);
+  return queries.slice(0, numQueries);
 }
 
 async function processSerpResult({
@@ -157,28 +178,21 @@ async function processSerpResult({
   for (let attempt = 0; attempt < maxRetries; attempt++) {
     try {
       const timeout = defaults.llmTimeout * (attempt + 1);
-      const res = await generateObject({
+      const res = await generateText({
         model: getModel(config?.modelSettings),
         abortSignal: AbortSignal.timeout(timeout),
         system: systemPrompt(),
-        prompt,
-        schema: z.object({
-          learnings: z
-            .array(z.string())
-            .describe(`List of learnings, max of ${numLearnings}`),
-          followUpQuestions: z
-            .array(z.string())
-            .describe(
-              `List of follow-up questions to research the topic further, max of ${numFollowUpQuestions}`,
-            ),
-        }),
+        prompt: prompt + `\n\nReturn each learning inside <learning>…</learning> tags and each follow-up question inside <follow_up>…</follow_up> tags. Return a maximum of ${numLearnings} learnings and ${numFollowUpQuestions} follow-up questions.`,
       });
+
+      const learningsResult = extractAllTags(res.text, 'learning').slice(0, numLearnings);
+      const followUpQuestions = extractAllTags(res.text, 'follow_up').slice(0, numFollowUpQuestions);
       log(
-        `Created ${res.object.learnings.length} learnings`,
-        res.object.learnings,
+        `Created ${learningsResult.length} learnings`,
+        learningsResult,
       );
 
-      return res.object;
+      return { learnings: learningsResult, followUpQuestions };
     } catch (e: any) {
       if (
         e.name === 'TimeoutError' ||
@@ -213,21 +227,27 @@ export async function writeFinalReport({
     .map(learning => `<learning>\n${learning}\n</learning>`)
     .join('\n');
 
-  const res = await generateObject({
+  const res = await generateText({
     model: getModel(config?.modelSettings),
     system: systemPrompt(),
     prompt: trimPrompt(
-      `Given the following prompt from the user, write a final report on the topic using the learnings from research. Make it as as detailed as possible, aim for 3 or more pages, include ALL the learnings from research:\n\n<prompt>${prompt}</prompt>\n\nHere are all the learnings from previous research:\n\n<learnings>\n${learningsString}\n</learnings>`,
+      `Given the following prompt from the user, write a final report on the topic using the learnings from research. Make it as detailed as possible, aim for 3 or more pages, include ALL the learnings from research.
+
+<prompt>${prompt}</prompt>
+
+Here are all the learnings from previous research:
+
+<learnings>
+${learningsString}
+</learnings>
+
+Write the full report in Markdown inside <report>…</report> tags.`,
     ),
-    schema: z.object({
-      reportMarkdown: z
-        .string()
-        .describe('Final report on the topic in Markdown'),
-    }),
   });
 
+  const report = extractTag(res.text, 'report') || res.text;
   const urlsSection = `\n\n## Sources\n\n${visitedUrls.map(url => `- ${url}`).join('\n')}`;
-  return res.object.reportMarkdown + urlsSection;
+  return report + urlsSection;
 }
 
 export async function writeFinalAnswer({
@@ -243,22 +263,25 @@ export async function writeFinalAnswer({
     .map(learning => `<learning>\n${learning}\n</learning>`)
     .join('\n');
 
-  const res = await generateObject({
+  const res = await generateText({
     model: getModel(config?.modelSettings),
     system: systemPrompt(),
     prompt: trimPrompt(
-      `Given the following prompt from the user, write a final answer on the topic using the learnings from research. Follow the format specified in the prompt. Do not yap or babble or include any other text than the answer besides the format specified in the prompt. Keep the answer as concise as possible - usually it should be just a few words or maximum a sentence. Try to follow the format specified in the prompt (for example, if the prompt is using Latex, the answer should be in Latex. If the prompt gives multiple answer choices, the answer should be one of the choices).\n\n<prompt>${prompt}</prompt>\n\nHere are all the learnings from research on the topic that you can use to help answer the prompt:\n\n<learnings>\n${learningsString}\n</learnings>`,
+      `Given the following prompt from the user, write a final answer on the topic using the learnings from research. Follow the format specified in the prompt. Do not yap or babble or include any other text than the answer besides the format specified in the prompt. Keep the answer as concise as possible - usually it should be just a few words or maximum a sentence. Try to follow the format specified in the prompt (for example, if the prompt is using Latex, the answer should be in Latex. If the prompt gives multiple answer choices, the answer should be one of the choices).
+
+<prompt>${prompt}</prompt>
+
+Here are all the learnings from research on the topic that you can use to help answer the prompt:
+
+<learnings>
+${learningsString}
+</learnings>
+
+Put your final answer inside <answer>…</answer> tags.`,
     ),
-    schema: z.object({
-      exactAnswer: z
-        .string()
-        .describe(
-          'The final answer, make it short and concise, just the answer, no other text',
-        ),
-    }),
   });
 
-  return res.object.exactAnswer;
+  return extractTag(res.text, 'answer') || res.text;
 }
 
 export async function deepResearch({
