@@ -8,3 +8,14 @@ services:
       -  ./:/app/
     tty: true
     stdin_open: true
+    depends_on:
+      - searxng
+
+  searxng:
+    container_name: searxng
+    image: searxng/searxng:latest
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./searxng/settings.yml:/etc/searxng/settings.yml:ro
+    restart: unless-stopped
