@@ -15,6 +15,10 @@ export interface ModelSettings {
   customModel?: string;
   fireworksKey?: string;
   contextSize?: number;
+  /** Model name for fast tasks (extraction, summarization). Falls back to primary model. */
+  fastModel?: string;
+  /** Endpoint for fast model if different from primary. Defaults to openaiEndpoint. */
+  fastModelEndpoint?: string;
 }
 
 /**
@@ -71,6 +75,33 @@ export function getModel(settings?: ModelSettings): LanguageModelV1 {
   }
 
   return model as LanguageModelV1;
+}
+
+export type ModelRole = 'thinking' | 'fast';
+
+/**
+ * Return a model appropriate for the given role.
+ * - 'thinking': planning, query generation, reasoning, report synthesis → primary model
+ * - 'fast': extraction, summarization → fastModel if configured, else primary model
+ */
+export function getModelForRole(
+  settings: ModelSettings | undefined,
+  role: ModelRole,
+): LanguageModelV1 {
+  if (role === 'fast' && settings?.fastModel) {
+    const apiKey = settings.openaiKey ?? process.env.OPENAI_KEY;
+    const endpoint =
+      settings.fastModelEndpoint ||
+      settings.openaiEndpoint ||
+      process.env.OPENAI_ENDPOINT ||
+      'https://api.openai.com/v1';
+    if (!apiKey) return getModel(settings); // fallback if no key
+    const provider = createOpenAI({ apiKey, baseURL: endpoint });
+    return provider(settings.fastModel, {
+      structuredOutputs: true,
+    }) as LanguageModelV1;
+  }
+  return getModel(settings);
 }
 
 const MinChunkSize = 140;

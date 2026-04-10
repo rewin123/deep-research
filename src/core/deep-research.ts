@@ -2,7 +2,7 @@ import { generateText } from 'ai';
 import { compact } from 'lodash-es';
 import pLimit from 'p-limit';
 
-import { type ModelSettings, getModel, trimPrompt } from './ai/providers';
+import { type ModelSettings, getModel, getModelForRole, trimPrompt } from './ai/providers';
 import { systemPrompt } from './prompt';
 import {
   type SearchProvider,
@@ -33,6 +33,36 @@ function extractAllTags(text: string, tag: string): string[] {
   return results;
 }
 
+// ── ReAct & Adaptive-depth types ──────────────────────────────────────
+
+export type ResearchAction = 'continue' | 'pivot' | 'stop';
+
+export interface ResearchDecision {
+  action: ResearchAction;
+  reasoning: string;
+  gaps: string[];
+  contradictions: string[];
+  pivotQueries: string[];
+  confidence: number;
+  saturated: boolean;
+}
+
+export interface ResearchBudget {
+  maxDepth: number;
+  maxQueries: number;
+  usedQueries: number;
+  startTime: number;
+  maxTimeMs?: number;
+}
+
+export type StopReason =
+  | 'max_depth'
+  | 'budget_exhausted'
+  | 'sufficient_coverage'
+  | 'saturated';
+
+// ── Core types ────────────────────────────────────────────────────────
+
 export type ResearchProgress = {
   currentDepth: number;
   totalDepth: number;
@@ -43,6 +73,12 @@ export type ResearchProgress = {
   completedQueries: number;
   learnings: string[];
   visitedUrls: string[];
+  /** The ReAct decision from the last reasoning step */
+  lastDecision?: ResearchDecision;
+  /** Budget tracking */
+  budget?: { maxQueries: number; usedQueries: number; maxDepth: number };
+  /** Why research stopped */
+  stopReason?: StopReason;
 };
 
 type ResearchResult = {
@@ -63,6 +99,10 @@ export interface ResearchConfig {
   tavilyConcurrency?: number;
   /** LLM timeout in ms (default: 180000) */
   llmTimeout?: number;
+  /** Max total search queries across all levels (0 = compute from breadth/depth) */
+  maxQueries?: number;
+  /** Max wall-clock time in ms (0 = no limit) */
+  maxTimeMs?: number;
 }
 
 function getDefaults(config?: ResearchConfig) {
@@ -104,6 +144,136 @@ function resolveSearchProvider(config?: ResearchConfig): SearchProvider {
   });
 }
 
+// ── Budget utilities ──────────────────────────────────────────────────
+
+function computeDefaultMaxQueries(breadth: number, depth: number): number {
+  let total = 0;
+  let b = breadth;
+  for (let d = 0; d < depth; d++) {
+    total += b;
+    b = Math.ceil(b / 2);
+  }
+  return total;
+}
+
+function createBudget(
+  breadth: number,
+  depth: number,
+  config?: ResearchConfig,
+): ResearchBudget {
+  const defaultMax = computeDefaultMaxQueries(breadth, depth);
+  return {
+    maxDepth: depth,
+    maxQueries: config?.maxQueries || defaultMax,
+    usedQueries: 0,
+    startTime: Date.now(),
+    maxTimeMs: config?.maxTimeMs || undefined,
+  };
+}
+
+function isBudgetExhausted(budget: ResearchBudget): boolean {
+  if (budget.usedQueries >= budget.maxQueries) return true;
+  if (budget.maxTimeMs && Date.now() - budget.startTime >= budget.maxTimeMs)
+    return true;
+  return false;
+}
+
+// ── ReAct reasoning step ──────────────────────────────────────────────
+
+async function evaluateResearch({
+  originalQuery,
+  learnings,
+  visitedUrls,
+  currentDepth,
+  maxDepth,
+  budget,
+  config,
+}: {
+  originalQuery: string;
+  learnings: string[];
+  visitedUrls: string[];
+  currentDepth: number;
+  maxDepth: number;
+  budget: ResearchBudget;
+  config?: ResearchConfig;
+}): Promise<ResearchDecision> {
+  const defaults = getDefaults(config);
+  const learningsXml = learnings
+    .map(l => `<learning>${l}</learning>`)
+    .join('\n');
+
+  try {
+    const res = await generateText({
+      model: getModelForRole(config?.modelSettings, 'thinking'),
+      abortSignal: AbortSignal.timeout(defaults.llmTimeout),
+      system: systemPrompt(),
+      prompt: trimPrompt(`You are evaluating the current state of a research investigation.
+
+<original_query>${originalQuery}</original_query>
+
+<accumulated_learnings>
+${learningsXml}
+</accumulated_learnings>
+
+<research_state>
+- Sources consulted: ${visitedUrls.length}
+- Current depth: ${currentDepth} of ${maxDepth} max
+- Search queries used: ${budget.usedQueries} of ${budget.maxQueries} max
+</research_state>
+
+Evaluate the research so far and decide what to do next. Consider:
+1. Are there knowledge GAPS — important aspects of the query that have not been covered?
+2. Are there CONTRADICTIONS between sources that need resolution?
+3. Is the research SATURATED — are we finding the same information repeatedly?
+4. Do we have SUFFICIENT coverage to answer the original query confidently?
+
+Return your evaluation in this format:
+
+<evaluation>
+<reasoning>Your detailed reasoning about the current research state</reasoning>
+<confidence>A number between 0 and 1</confidence>
+<saturated>true or false</saturated>
+<gaps>
+<gap>description of a knowledge gap</gap>
+</gaps>
+<contradictions>
+<contradiction>description of a contradiction</contradiction>
+</contradictions>
+<action>continue, pivot, or stop</action>
+<pivot_queries>
+<query>new search query if pivoting</query>
+</pivot_queries>
+</evaluation>`),
+    });
+
+    const text = res.text;
+    const evalBlock = extractTag(text, 'evaluation') || text;
+
+    return {
+      action: (extractTag(evalBlock, 'action') || 'continue') as ResearchAction,
+      reasoning: extractTag(evalBlock, 'reasoning'),
+      gaps: extractAllTags(evalBlock, 'gap'),
+      contradictions: extractAllTags(evalBlock, 'contradiction'),
+      pivotQueries: extractAllTags(evalBlock, 'query'),
+      confidence: parseFloat(extractTag(evalBlock, 'confidence')) || 0,
+      saturated: extractTag(evalBlock, 'saturated') === 'true',
+    };
+  } catch (e: any) {
+    log('evaluateResearch failed, defaulting to continue:', e.message);
+    return {
+      action: 'continue',
+      reasoning: 'Evaluation failed, continuing by default',
+      gaps: [],
+      contradictions: [],
+      pivotQueries: [],
+      confidence: 0,
+      saturated: false,
+    };
+  }
+}
+
+// ── Search query generation ───────────────────────────────────────────
+
 async function generateSerpQueries({
   query,
   numQueries = 3,
@@ -116,7 +286,7 @@ async function generateSerpQueries({
   config?: ResearchConfig;
 }) {
   const res = await generateText({
-    model: getModel(config?.modelSettings),
+    model: getModelForRole(config?.modelSettings, 'thinking'),
     system: systemPrompt(),
     prompt: `Given the following prompt from the user, generate a list of SERP queries to research the topic. Return a maximum of ${numQueries} queries, but feel free to return less if the original prompt is clear. Make sure each query is unique and not similar to each other.
 
@@ -179,7 +349,7 @@ async function processSerpResult({
     try {
       const timeout = defaults.llmTimeout * (attempt + 1);
       const res = await generateText({
-        model: getModel(config?.modelSettings),
+        model: getModelForRole(config?.modelSettings, 'fast'),
         abortSignal: AbortSignal.timeout(timeout),
         system: systemPrompt(),
         prompt: prompt + `\n\nReturn each learning inside <learning>…</learning> tags and each follow-up question inside <follow_up>…</follow_up> tags. Return a maximum of ${numLearnings} learnings and ${numFollowUpQuestions} follow-up questions.`,
@@ -228,7 +398,7 @@ export async function writeFinalReport({
     .join('\n');
 
   const res = await generateText({
-    model: getModel(config?.modelSettings),
+    model: getModelForRole(config?.modelSettings, 'thinking'),
     system: systemPrompt(),
     prompt: trimPrompt(
       `Given the following prompt from the user, write a final report on the topic using the learnings from research. Make it as detailed as possible, aim for 3 or more pages, include ALL the learnings from research.
@@ -264,7 +434,7 @@ export async function writeFinalAnswer({
     .join('\n');
 
   const res = await generateText({
-    model: getModel(config?.modelSettings),
+    model: getModelForRole(config?.modelSettings, 'thinking'),
     system: systemPrompt(),
     prompt: trimPrompt(
       `Given the following prompt from the user, write a final answer on the topic using the learnings from research. Follow the format specified in the prompt. Do not yap or babble or include any other text than the answer besides the format specified in the prompt. Keep the answer as concise as possible - usually it should be just a few words or maximum a sentence. Try to follow the format specified in the prompt (for example, if the prompt is using Latex, the answer should be in Latex. If the prompt gives multiple answer choices, the answer should be one of the choices).
@@ -292,7 +462,6 @@ export async function deepResearch({
   visitedUrls = [],
   onProgress,
   config,
-  _sharedProgress,
 }: {
   query: string;
   breadth: number;
@@ -301,14 +470,20 @@ export async function deepResearch({
   visitedUrls?: string[];
   onProgress?: (progress: ResearchProgress) => void;
   config?: ResearchConfig;
-  /** @internal shared progress object across recursion tree */
+  /** @internal kept for API compat — ignored in iterative implementation */
   _sharedProgress?: ResearchProgress;
 }): Promise<ResearchResult> {
   const defaults = getDefaults(config);
   const searchProvider = resolveSearchProvider(config);
+  const budget = createBudget(breadth, depth, config);
 
-  // Top-level call creates the shared progress; recursive calls reuse it
-  const progress: ResearchProgress = _sharedProgress ?? {
+  let accumulatedLearnings = [...learnings];
+  let accumulatedUrls = [...visitedUrls];
+  let currentBreadth = breadth;
+  let currentQueries = [query]; // seed queries for level 0
+  let stopReason: StopReason | undefined;
+
+  const progress: ResearchProgress = {
     currentDepth: depth,
     totalDepth: depth,
     currentBreadth: breadth,
@@ -324,108 +499,162 @@ export async function deepResearch({
     onProgress?.(progress);
   };
 
-  const serpQueries = await generateSerpQueries({
-    query,
-    learnings,
-    numQueries: breadth,
-    config,
-  });
+  for (let level = 0; level < depth; level++) {
+    if (isBudgetExhausted(budget)) {
+      stopReason = 'budget_exhausted';
+      log(`Budget exhausted at level ${level}`);
+      break;
+    }
 
-  // Accumulate totalQueries across recursion levels (additive, not replacement)
-  reportProgress({
-    totalQueries: progress.totalQueries + serpQueries.length,
-    currentQuery: serpQueries[0]?.query,
-  });
+    // Step 1: Generate search queries for this level
+    const allSerpQueries: Array<{ query: string; researchGoal: string }> = [];
+    const queriesPerSeed = Math.max(
+      1,
+      Math.ceil(currentBreadth / currentQueries.length),
+    );
 
-  const limit = pLimit(defaults.concurrencyLimit);
+    for (const q of currentQueries) {
+      const queries = await generateSerpQueries({
+        query: q,
+        learnings: accumulatedLearnings,
+        numQueries: queriesPerSeed,
+        config,
+      });
+      allSerpQueries.push(...queries);
+    }
 
-  const results = await Promise.all(
-    serpQueries.map(serpQuery =>
-      limit(async () => {
-        try {
-          const result = await searchProvider.search(serpQuery.query, 5);
+    log(
+      `Level ${level}: generated ${allSerpQueries.length} queries (breadth=${currentBreadth})`,
+    );
 
-          const newUrls = compact(result.results.map(item => item.url));
-          const newBreadth = Math.ceil(breadth / 2);
-          const newDepth = depth - 1;
+    reportProgress({
+      currentDepth: depth - level,
+      currentBreadth: currentBreadth,
+      totalQueries: progress.totalQueries + allSerpQueries.length,
+      currentQuery: allSerpQueries[0]?.query,
+      budget: {
+        maxQueries: budget.maxQueries,
+        usedQueries: budget.usedQueries,
+        maxDepth: depth,
+      },
+    });
 
-          const newLearnings = await processSerpResult({
-            query: serpQuery.query,
-            result,
-            numFollowUpQuestions: newBreadth,
-            config,
-          });
+    // Step 2: Execute searches and extract learnings (parallel)
+    const limit = pLimit(defaults.concurrencyLimit);
+    let levelFollowUps: string[] = [];
 
-          // Update shared progress with new learnings and URLs incrementally
-          for (const l of newLearnings.learnings) {
-            if (!progress.learnings.includes(l)) {
-              progress.learnings.push(l);
-            }
+    const results = await Promise.all(
+      allSerpQueries.map(serpQuery =>
+        limit(async () => {
+          if (isBudgetExhausted(budget)) {
+            return { learnings: [], followUps: [], urls: [] };
           }
-          for (const u of newUrls) {
-            if (!progress.visitedUrls.includes(u)) {
-              progress.visitedUrls.push(u);
-            }
-          }
 
-          const allLearnings = [...learnings, ...newLearnings.learnings];
-          const allUrls = [...visitedUrls, ...newUrls];
+          try {
+            budget.usedQueries++;
+            const result = await searchProvider.search(serpQuery.query, 5);
+            const newUrls = compact(result.results.map(item => item.url));
 
-          if (newDepth > 0) {
-            log(
-              `Researching deeper, breadth: ${newBreadth}, depth: ${newDepth}`,
-            );
-
-            reportProgress({
-              currentDepth: newDepth,
-              currentBreadth: newBreadth,
-              completedQueries: progress.completedQueries + 1,
-              currentQuery: serpQuery.query,
-            });
-
-            const nextQuery = `
-            Previous research goal: ${serpQuery.researchGoal}
-            Follow-up research directions: ${newLearnings.followUpQuestions.map(q => `\n${q}`).join('')}
-          `.trim();
-
-            return deepResearch({
-              query: nextQuery,
-              breadth: newBreadth,
-              depth: newDepth,
-              learnings: allLearnings,
-              visitedUrls: allUrls,
-              onProgress,
+            const processed = await processSerpResult({
+              query: serpQuery.query,
+              result,
+              numFollowUpQuestions: Math.ceil(currentBreadth / 2),
               config,
-              _sharedProgress: progress,
             });
-          } else {
+
             reportProgress({
-              currentDepth: 0,
               completedQueries: progress.completedQueries + 1,
               currentQuery: serpQuery.query,
             });
+
             return {
-              learnings: allLearnings,
-              visitedUrls: allUrls,
+              learnings: processed.learnings,
+              followUps: processed.followUpQuestions,
+              urls: newUrls,
             };
-          }
-        } catch (e: any) {
-          if (e.message && e.message.includes('Timeout')) {
-            log(`Timeout error running query: ${serpQuery.query}: `, e);
-          } else {
+          } catch (e: any) {
             log(`Error running query: ${serpQuery.query}: `, e);
+            return { learnings: [], followUps: [], urls: [] };
           }
-          return {
-            learnings: [],
-            visitedUrls: [],
-          };
-        }
-      }),
-    ),
+        }),
+      ),
+    );
+
+    // Step 3: Merge results into accumulated state
+    const newLearnings = results.flatMap(r => r.learnings);
+    const newUrls = results.flatMap(r => r.urls);
+    levelFollowUps = results.flatMap(r => r.followUps);
+
+    for (const l of newLearnings) {
+      if (!accumulatedLearnings.includes(l)) accumulatedLearnings.push(l);
+    }
+    for (const u of newUrls) {
+      if (!accumulatedUrls.includes(u)) accumulatedUrls.push(u);
+    }
+
+    reportProgress({
+      learnings: [...accumulatedLearnings],
+      visitedUrls: [...accumulatedUrls],
+    });
+
+    // Step 4: ReAct reasoning (skip on last level — no point evaluating if we can't recurse)
+    if (level < depth - 1 && !isBudgetExhausted(budget)) {
+      log(`ReAct evaluation after level ${level}...`);
+
+      const decision = await evaluateResearch({
+        originalQuery: query,
+        learnings: accumulatedLearnings,
+        visitedUrls: accumulatedUrls,
+        currentDepth: level + 1,
+        maxDepth: depth,
+        budget,
+        config,
+      });
+
+      log(
+        `ReAct decision: ${decision.action} (confidence=${decision.confidence}, saturated=${decision.saturated})`,
+      );
+      reportProgress({ lastDecision: decision });
+
+      if (decision.action === 'stop') {
+        stopReason = decision.saturated ? 'saturated' : 'sufficient_coverage';
+        log(`Stopping early: ${stopReason}`);
+        break;
+      } else if (decision.action === 'pivot') {
+        currentQueries =
+          decision.pivotQueries.length > 0
+            ? decision.pivotQueries
+            : levelFollowUps.slice(0, currentBreadth);
+        log(`Pivoting to ${currentQueries.length} new queries`);
+      } else {
+        // 'continue': use follow-up questions
+        currentQueries = levelFollowUps.slice(0, currentBreadth);
+      }
+
+      if (currentQueries.length === 0) {
+        stopReason = 'saturated';
+        log('No follow-up queries available, stopping');
+        break;
+      }
+    }
+
+    // Halve breadth for next level (matches original behavior)
+    currentBreadth = Math.ceil(currentBreadth / 2);
+  }
+
+  if (!stopReason) stopReason = 'max_depth';
+
+  reportProgress({
+    currentDepth: 0,
+    stopReason,
+  });
+
+  log(
+    `Research complete: ${accumulatedLearnings.length} learnings, ${accumulatedUrls.length} URLs, reason=${stopReason}`,
   );
 
   return {
-    learnings: [...new Set(results.flatMap(r => r.learnings))],
-    visitedUrls: [...new Set(results.flatMap(r => r.visitedUrls))],
+    learnings: [...new Set(accumulatedLearnings)],
+    visitedUrls: [...new Set(accumulatedUrls)],
   };
 }

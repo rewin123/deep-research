@@ -66,6 +66,10 @@ export interface AppSettings {
   llmTimeout: number;
   tavilyConcurrency: number;
   fireworksKey: string;
+  fastModel: string;
+  fastModelEndpoint: string;
+  maxQueries: number;
+  maxTimeMs: number;
 }
 
 // Sessions

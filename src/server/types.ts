@@ -55,6 +55,14 @@ export interface AppSettings {
   llmTimeout: number;
   tavilyConcurrency: number;
   fireworksKey: string;
+  /** Model name for fast tasks (extraction, summarization). Empty = use primary model. */
+  fastModel: string;
+  /** Endpoint for fast model. Empty = use primary endpoint. */
+  fastModelEndpoint: string;
+  /** Max total search queries (0 = auto from breadth/depth). */
+  maxQueries: number;
+  /** Max research time in ms (0 = unlimited). */
+  maxTimeMs: number;
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -68,4 +76,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
   llmTimeout: 180_000,
   tavilyConcurrency: 2,
   fireworksKey: '',
+  fastModel: '',
+  fastModelEndpoint: '',
+  maxQueries: 0,
+  maxTimeMs: 0,
 };

@@ -51,11 +51,15 @@ export function settingsToResearchConfig(settings: AppSettings) {
       customModel: settings.customModel || undefined,
       fireworksKey: settings.fireworksKey || undefined,
       contextSize: settings.contextSize || undefined,
+      fastModel: settings.fastModel || undefined,
+      fastModelEndpoint: settings.fastModelEndpoint || undefined,
     },
     tavilyApiKey: settings.tavilyApiKey || undefined,
     searchProvider: settings.searchProvider || undefined,
     searxngUrl: settings.searxngUrl || undefined,
     tavilyConcurrency: settings.tavilyConcurrency || undefined,
     llmTimeout: settings.llmTimeout || undefined,
+    maxQueries: settings.maxQueries || undefined,
+    maxTimeMs: settings.maxTimeMs || undefined,
   };
 }

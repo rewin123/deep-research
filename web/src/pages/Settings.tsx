@@ -52,6 +52,20 @@ const FIELDS: {
     hint: 'For DeepSeek R1 model via Fireworks',
   },
   {
+    key: 'fastModel',
+    label: 'Fast Model Name',
+    type: 'text',
+    placeholder: 'e.g. gpt-4.1-mini',
+    hint: 'Cheaper model for extraction/summarization. Leave empty to use primary model for everything.',
+  },
+  {
+    key: 'fastModelEndpoint',
+    label: 'Fast Model Endpoint',
+    type: 'text',
+    placeholder: '',
+    hint: 'Endpoint for the fast model. Leave empty to use the primary endpoint.',
+  },
+  {
     key: 'contextSize',
     label: 'Context Size',
     type: 'number',
@@ -71,6 +85,20 @@ const FIELDS: {
     type: 'number',
     placeholder: '2',
     hint: 'Max parallel search queries',
+  },
+  {
+    key: 'maxQueries',
+    label: 'Max Search Queries',
+    type: 'number',
+    placeholder: '0',
+    hint: 'Total search query budget across all levels. 0 = auto-compute from breadth/depth.',
+  },
+  {
+    key: 'maxTimeMs',
+    label: 'Max Research Time (ms)',
+    type: 'number',
+    placeholder: '0',
+    hint: 'Wall-clock time limit for research. 0 = unlimited.',
   },
 ];
 
